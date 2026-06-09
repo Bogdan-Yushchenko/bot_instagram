@@ -129,6 +129,9 @@ async function checkInbox(page) {
       if (!box || box.width < 150 || box.x > 500 || box.height < 40) continue;
       const text = (await item.textContent().catch(() => '')).toLowerCase();
       if (text.includes('search') || text.includes('new post') || text.includes('settings')) continue;
+      // Якщо останнє повідомлення — наша відповідь, пропускаємо чат
+      const lastIsBotReply = RULES.some(r => text.includes(r.reply.toLowerCase().substring(0, 20)));
+      if (lastIsBotReply) continue;
       positions.push({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
     } catch {}
   }
