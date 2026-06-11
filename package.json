@@ -2,6 +2,7 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "instagram-private-api": "^1.46.1",
+    "openai": "^6.42.0",
     "playwright": "^1.60.0"
   }
 }
