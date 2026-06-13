@@ -4,3 +4,4 @@ bot_state.json
 node_modules/
 .claude/
 *.png
+user_profiles.json
