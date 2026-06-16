@@ -256,23 +256,30 @@ export class InstagramClient {
 
         if (results.length > 0) return results;
 
-        // Strategy 2: walk all [dir="auto"] elements, find nearest username link
-        // Skip timestamp-like text and Instagram reserved paths
+        // Strategy 2: for each comment text element walk UP the DOM until we reach
+        // the smallest ancestor that contains EXACTLY ONE "author" link.
+        // Author links are identified by being /username/ (one path segment) AND
+        // NOT inside a [dir="auto"] element (which would make them @mentions inside text).
+        // This is order-independent: works whether the link appears before or after the text.
         const tsPattern = /^\\d+\\s*[smhd]$|^\\d+\\s*(min|hour|day|week|month|sec|хв|год|дн|тиж|міс|сек)/i;
         const reserved = new Set(['reels','explore','direct','p','tv','stories','accounts','reel','highlights']);
+
+        function isAuthorLink(a) {
+          if (a.closest('[dir="auto"]')) return false; // @mention inside comment text
+          const parts = (a.getAttribute('href') || '').split('/').filter(Boolean);
+          return parts.length === 1 && !reserved.has(parts[0].toLowerCase());
+        }
+
         for (const textEl of document.querySelectorAll('[dir="auto"]')) {
+          if (textEl.closest('a')) continue; // username display text — skip
           const text = (textEl.innerText || textEl.textContent || '').trim();
-          if (!text || text.length < 2) continue;
-          if (tsPattern.test(text)) continue; // skip timestamps
-          let parent = textEl.parentElement;
-          for (let i = 0; i < 8; i++) {
-            if (!parent) break;
-            const link = parent.querySelector('a[href^="/"]');
-            if (link) {
-              // Skip links that are inside the text element itself (e.g. @mentions)
-              if (textEl.contains(link)) { parent = parent.parentElement; continue; }
-              const username = (link.getAttribute('href') || '').replace(/\\//g, '');
-              if (!username || reserved.has(username.toLowerCase())) break;
+          if (!text || text.length < 2 || tsPattern.test(text)) continue;
+
+          let container = textEl.parentElement;
+          for (let d = 0; d < 12 && container && container.tagName !== 'BODY'; d++) {
+            const authorLinks = [...container.querySelectorAll('a[href^="/"]')].filter(isAuthorLink);
+            if (authorLinks.length === 1) {
+              const username = authorLinks[0].getAttribute('href').split('/').filter(Boolean)[0];
               const key = username + '_' + text.slice(0, 30);
               if (!seen.has(key)) {
                 seen.add(key);
@@ -280,7 +287,7 @@ export class InstagramClient {
               }
               break;
             }
-            parent = parent.parentElement;
+            container = container.parentElement;
           }
         }
 
@@ -294,28 +301,32 @@ export class InstagramClient {
     await this.postPage.goto(`${IG_ROOT}${postHref}`, {
       waitUntil: 'load', timeout: 20_000,
     }).catch(() => {});
-    await this.postPage.waitForTimeout(3_000);
+    await this.postPage.waitForTimeout(3_500);
 
     await this.postPage.evaluate(
       new Function('window.scrollTo(0, document.body.scrollHeight)') as () => void,
     );
     await this.postPage.waitForTimeout(1_000);
 
-    const textarea = this.postPage.locator('textarea[placeholder]').last();
+    // Instagram uses <textarea aria-label="Add a comment…"> (NOT placeholder, NOT contenteditable)
+    // There is also a hidden aria-hidden="true" textarea — we must exclude it
+    const textarea = this.postPage.locator('textarea:not([aria-hidden="true"])').last();
     await textarea.waitFor({ state: 'visible', timeout: 10_000 });
-    await textarea.scrollIntoViewIfNeeded();
+    await textarea.scrollIntoViewIfNeeded().catch(() => {});
     await textarea.click();
     await this.postPage.waitForTimeout(500);
-    await textarea.fill(text);
-    await this.postPage.waitForTimeout(400);
 
+    // fill() triggers React's input event in Playwright
+    await textarea.fill(text);
+    await this.postPage.waitForTimeout(800);
+
+    // Click the "Post" / "Опублікувати" button that appears after typing
+    const postBtn = this.postPage.locator('button').filter({
+      hasText: /^(post|опублікувати|опубликовать|publish)$/i,
+    }).last();
     try {
-      const btn = this.postPage.locator('[type="submit"]').last();
-      if (await btn.isEnabled({ timeout: 1_500 })) {
-        await btn.click();
-      } else {
-        await this.postPage.keyboard.press('Enter');
-      }
+      await postBtn.waitFor({ state: 'visible', timeout: 3_000 });
+      await postBtn.click();
     } catch {
       await this.postPage.keyboard.press('Enter');
     }
@@ -329,19 +340,46 @@ export class InstagramClient {
       await this.postPage.goto(`${IG_ROOT}${postHref}`, {
         waitUntil: 'load', timeout: 20_000,
       }).catch(() => {});
-      await this.postPage.waitForTimeout(2_000);
+      await this.postPage.waitForTimeout(3_000);
     }
 
-    const textarea = this.postPage.locator('textarea[placeholder]').last();
+    // Try to click "Reply" on the specific comment to create a threaded reply
+    const usernameLink = this.postPage.locator(`a[href="/${commentUsername}/"]`).last();
+    if (await usernameLink.count() > 0) {
+      await usernameLink.scrollIntoViewIfNeeded().catch(() => {});
+      await this.postPage.waitForTimeout(400);
+      await usernameLink.hover().catch(() => {});
+      await this.postPage.waitForTimeout(600);
+
+      const replyBtn = this.postPage.locator('button, [role="button"]')
+        .filter({ hasText: /^(reply|відповісти|ответить)$/i })
+        .last();
+      if (await replyBtn.count() > 0) {
+        await replyBtn.click({ timeout: 3_000 }).catch(() => {});
+        await this.postPage.waitForTimeout(600);
+      }
+    }
+
+    // Use the visible comment textarea (not the hidden aria-hidden one)
+    const textarea = this.postPage.locator('textarea:not([aria-hidden="true"])').last();
     await textarea.waitFor({ state: 'visible', timeout: 8_000 });
     await textarea.click();
     await this.postPage.waitForTimeout(300);
     await textarea.fill(`@${commentUsername} ${replyText}`);
-    await this.postPage.waitForTimeout(300);
-    await this.postPage.keyboard.press('Enter');
-    await this.postPage.waitForTimeout(1_500);
+    await this.postPage.waitForTimeout(400);
 
-    logger.debug('Comment reply sent', { postHref, commentUsername });
+    const postBtn = this.postPage.locator('button').filter({
+      hasText: /^(post|опублікувати|опубликовать|publish)$/i,
+    }).last();
+    try {
+      await postBtn.waitFor({ state: 'visible', timeout: 3_000 });
+      await postBtn.click();
+    } catch {
+      await this.postPage.keyboard.press('Enter');
+    }
+
+    await this.postPage.waitForTimeout(2_000);
+    logger.info('Comment reply posted', { postHref, commentUsername, preview: replyText.substring(0, 60) });
   }
 
   /** Sends a DM to a commenter. Uses existing thread if known, otherwise inbox search. */
@@ -395,15 +433,34 @@ export class InstagramClient {
     const searchInput = this.postPage.locator('input').first();
     await searchInput.waitFor({ state: 'visible', timeout: 5_000 });
     await searchInput.fill(username);
-    await this.postPage.waitForTimeout(2_000);
+    await this.postPage.waitForTimeout(2_500);
 
-    const anyResult = this.postPage.locator('*').filter({ hasText: new RegExp(`^${username}$`) }).first();
-    await anyResult.click({ timeout: 5_000 });
-    await this.postPage.waitForTimeout(500);
+    // Find the search result that shows the exact username (in a list item or similar)
+    const userResult = this.postPage
+      .locator('[role="listbox"] [role="option"], [role="list"] > *, div[tabindex]')
+      .filter({ hasText: username })
+      .first();
 
-    const nextBtn = this.postPage.locator('button').filter({ hasText: /next|chat|далі/i }).first();
-    await nextBtn.click({ timeout: 3_000 }).catch(() => {});
-    await this.postPage.waitForTimeout(2_000);
+    if ((await userResult.count()) === 0) {
+      logger.warn('User not found in compose search', { username });
+      return;
+    }
+
+    await userResult.click({ timeout: 5_000 });
+    await this.postPage.waitForTimeout(800);
+
+    const nextBtn = this.postPage.locator('button').filter({ hasText: /next|chat|далі|ок|ok/i }).first();
+    if ((await nextBtn.count()) > 0) {
+      await nextBtn.click({ timeout: 3_000 }).catch(() => {});
+      await this.postPage.waitForTimeout(2_000);
+    }
+
+    // Verify we're in a DM thread before sending
+    const currentUrl = this.postPage.url();
+    if (!currentUrl.includes('/direct/')) {
+      logger.warn('Not in DM thread after compose flow', { username, url: currentUrl });
+      return;
+    }
 
     await this._sendInCurrentThread(text);
     logger.info('DM sent via compose flow', { username, preview: text.substring(0, 60) });
@@ -417,6 +474,101 @@ export class InstagramClient {
     await this.postPage.waitForTimeout(400);
     await this.postPage.keyboard.press('Enter');
     await this.postPage.waitForTimeout(1_500);
+  }
+
+  async deleteOwnComment(postHref: string, commentText: string): Promise<void> {
+    if (!this.postPage.url().includes(postHref)) {
+      await this.postPage.goto(`${IG_ROOT}${postHref}`, {
+        waitUntil: 'load', timeout: 20_000,
+      }).catch(() => {});
+      await this.postPage.waitForTimeout(3_000);
+    }
+
+    // Use the first line of the comment text as a unique anchor
+    const textAnchor = commentText.split('\n')[0]?.trim().substring(0, 30) ?? '';
+    if (!textAnchor) {
+      logger.warn('No comment text anchor provided', { postHref });
+      return;
+    }
+
+    // Mark the specific comment <li> by text content.
+    // We walk up from the text node but STOP before entering <header>
+    // so we never accidentally target the post-level "More options" button.
+    const marked = await this.postPage.evaluate((anchor: string) => {
+      const elements = document.querySelectorAll<HTMLElement>('span, [dir="auto"]');
+      for (const el of elements) {
+        if (!(el.textContent ?? '').includes(anchor)) continue;
+        let parent: HTMLElement | null = el.parentElement;
+        for (let i = 0; i < 10 && parent; i++) {
+          if (parent.closest('header')) break;        // never touch post header area
+          if (parent.tagName.toLowerCase() === 'li') {
+            parent.setAttribute('data-del-target', '1');
+            parent.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return true;
+          }
+          parent = parent.parentElement;
+        }
+      }
+      return false;
+    }, textAnchor);
+
+    if (!marked) {
+      logger.warn('Own comment not found by text on post page', { postHref, textAnchor });
+      return;
+    }
+
+    // Playwright hover on the marked <li> — this triggers real CSS :hover
+    const commentRow = this.postPage.locator('[data-del-target="1"]');
+    await commentRow.scrollIntoViewIfNeeded().catch(() => {});
+    await this.postPage.waitForTimeout(400);
+    await commentRow.hover().catch(() => {});
+    await this.postPage.waitForTimeout(800);
+
+    // Find options button SCOPED TO the comment row — never touches post-level buttons
+    const optionsBtn = commentRow.locator(
+      '[aria-label*="More"], [aria-label*="more"], [aria-label*="Більше"], [aria-label*="Ещё"]',
+    ).first();
+
+    const removeMarker = () =>
+      this.postPage.evaluate(() => {
+        document.querySelector('[data-del-target]')?.removeAttribute('data-del-target');
+      });
+
+    if ((await optionsBtn.count()) === 0) {
+      logger.warn('Options button not found in comment row', { postHref, textAnchor });
+      await removeMarker();
+      return;
+    }
+
+    await optionsBtn.click({ timeout: 3_000 });
+    await this.postPage.waitForTimeout(600);
+    await removeMarker();
+
+    // Click "Delete" in the popup (exact match to avoid partial matches like "Delete post")
+    const deleteBtn = this.postPage
+      .locator('button, [role="button"]')
+      .filter({ hasText: /^(delete|видалити|удалить)$/i })
+      .first();
+
+    if ((await deleteBtn.count()) === 0) {
+      logger.warn('Delete button not found in popup', { postHref });
+      return;
+    }
+
+    await deleteBtn.click({ timeout: 3_000 });
+    await this.postPage.waitForTimeout(800);
+
+    // Confirm if Instagram shows a second confirmation dialog
+    const confirmBtn = this.postPage
+      .locator('button')
+      .filter({ hasText: /^(delete|видалити|удалить)$/i })
+      .last();
+    if ((await confirmBtn.count()) > 0) {
+      await confirmBtn.click({ timeout: 2_000 }).catch(() => {});
+      await this.postPage.waitForTimeout(1_000);
+    }
+
+    logger.info('Auto-comment deleted', { postHref });
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────

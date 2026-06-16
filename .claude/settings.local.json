@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Start-Sleep 40; Get-Content 'C:\\\\Users\\\\madeg\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-madeg-Desktop-bot-instagram\\\\4a89df77-a8d3-4d1d-840d-342a7c3af40d\\\\tasks\\\\bsjc5ruuo.output' -Encoding UTF8\")",
+      "Bash(tasklist /FI \"IMAGENAME eq node.exe\" /FO LIST)"
+    ]
+  }
+}

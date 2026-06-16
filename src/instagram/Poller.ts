@@ -13,18 +13,35 @@ export class Poller {
   private readonly seenDmHashes      = new Set<string>();
   // Tracks "username:keyword" within a session to avoid retrying a DM that was just sent
   private readonly seenLeadKeys      = new Set<string>();
-  private readonly autoCommentedPosts = new Set<string>(
-    fs.existsSync(COMMENTED_FILE)
-      ? (JSON.parse(fs.readFileSync(COMMENTED_FILE, 'utf-8')) as string[])
-      : [],
-  );
+  // Maps postHref → text of the auto-comment we posted (for staleness check)
+  private readonly autoCommentedPosts: Map<string, string>;
   private readonly postKeywords  = new PostKeywordResponder();
   private readonly leadsTracker  = new CommentLeadsTracker();
 
   constructor(
     private readonly igClient: InstagramClient,
     private readonly botService: BotService,
-  ) {}
+  ) {
+    // Load from file — support both old format (string[]) and new (Record<string,string>)
+    if (fs.existsSync(COMMENTED_FILE)) {
+      const raw: unknown = JSON.parse(fs.readFileSync(COMMENTED_FILE, 'utf-8'));
+      if (Array.isArray(raw)) {
+        // Migrate: store empty string so staleness check triggers on next run
+        this.autoCommentedPosts = new Map((raw as string[]).map(h => [h, '']));
+      } else {
+        this.autoCommentedPosts = new Map(Object.entries(raw as Record<string, string>));
+      }
+    } else {
+      this.autoCommentedPosts = new Map();
+    }
+  }
+
+  private saveCommentedPosts(): void {
+    fs.writeFileSync(COMMENTED_FILE, JSON.stringify(
+      Object.fromEntries(this.autoCommentedPosts), null, 2,
+    ));
+  }
+
 
   async start(): Promise<void> {
     await this.igClient.launch();
@@ -55,7 +72,20 @@ export class Poller {
           if (msg.isOutgoing) continue;
           if (this.seenDmHashes.has(msg.hash)) continue;
           this.seenDmHashes.add(msg.hash);
+
+          logger.info('New DM received', { username, seedOnly, preview: msg.text.substring(0, 60) });
+
           if (seedOnly) continue;
+
+          // Check post keywords first — reply instantly via DM
+          const { keyword, reply } = this.postKeywords.getMatch(msg.text);
+          if (keyword !== '__default__') {
+            logger.info('Keyword matched in DM, sending reply', { username, keyword });
+            await this.igClient.sendDmToUser(username, reply);
+            continue;
+          }
+
+          // No keyword match — pass to scenario engine
           await this.botService.handleDirectMessage(username, msg.text, msg.hash, username);
         }
       }
@@ -72,11 +102,23 @@ export class Poller {
       logger.info('Post scan', { seedOnly, found: postHrefs.length });
 
       for (const postHref of postHrefs) {
-        if (!seedOnly && !this.autoCommentedPosts.has(postHref)) {
-          const intro = this.postKeywords.getDefaultReply();
-          await this.igClient.postComment(postHref, intro);
-          this.autoCommentedPosts.add(postHref);
-          fs.writeFileSync(COMMENTED_FILE, JSON.stringify([...this.autoCommentedPosts]));
+        if (!seedOnly) {
+          const currentReply = this.postKeywords.getDefaultReply();
+          const savedText    = this.autoCommentedPosts.get(postHref);
+
+          if (savedText === undefined) {
+            // New post — publish the instruction comment
+            await this.igClient.postComment(postHref, currentReply);
+            this.autoCommentedPosts.set(postHref, currentReply);
+            this.saveCommentedPosts();
+          } else if (savedText !== currentReply) {
+            // Instruction changed — delete old comment and publish updated one
+            logger.info('Auto-comment outdated, updating', { postHref });
+            await this.igClient.deleteOwnComment(postHref, savedText);
+            await this.igClient.postComment(postHref, currentReply);
+            this.autoCommentedPosts.set(postHref, currentReply);
+            this.saveCommentedPosts();
+          }
         }
 
         const comments = await this.igClient.getPostComments(postHref);
