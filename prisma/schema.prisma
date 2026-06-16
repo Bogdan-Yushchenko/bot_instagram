@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ─────────────────────────────────────────────────────────────────────
+
+enum LeadStatus {
+  NEW_LEAD       // Just appeared, no scenario triggered yet
+  MATERIAL_SENT  // Welcome message + link sent
+  QUALIFIED      // Practice type identified
+  DEMO_OFFERED   // Demo call proposed
+  CLOSED         // Converted or dropped
+}
+
+enum LeadCategory {
+  PRIVATE_PRACTICE   // Solo psychologist
+  PSYCHOLOGY_CENTER  // Works in / owns a center
+  BEGINNER           // Just starting out
+  UNKNOWN
+}
+
+enum MessageDirection {
+  INBOUND   // From user to bot
+  OUTBOUND  // From bot to user
+}
+
+// ── Models ────────────────────────────────────────────────────────────────────
+
+model Lead {
+  id            String        @id @default(uuid())
+  instagramId   String        @unique  // Numeric Instagram user ID
+  username      String?
+  name          String?
+  status        LeadStatus    @default(NEW_LEAD)
+  category      LeadCategory?
+  scenarioId    String?       // Active scenario, e.g. "saas_pitch"
+  currentStepId String?       // Current step inside the scenario
+  metadata      Json?         // Arbitrary extra data
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  messages      Message[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Message {
+  id             String           @id @default(uuid())
+  leadId         String
+  lead           Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  direction      MessageDirection
+  text           String           @db.Text
+  instagramMsgId String?          @unique  // Mid from Instagram API
+  createdAt      DateTime         @default(now())
+
+  @@index([leadId])
+  @@index([createdAt])
+}

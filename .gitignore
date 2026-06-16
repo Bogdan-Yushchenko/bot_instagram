@@ -1,7 +1,12 @@
+node_modules/
+dist/
 .env
 session.json
-bot_state.json
-node_modules/
-.claude/
-*.png
-user_profiles.json
+ig_session.json
+commented_posts.json
+comment_leads.json
+*.log
+.DS_Store
+debug_*.mts
+debug_*.png
+bot_output.txt

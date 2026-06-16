@@ -1,0 +1,77 @@
+{
+  "id": "saas_pitch",
+  "triggers": ["автоматизация", "автоматизацию", "crm", "психолог"],
+  "initialStep": "welcome",
+  "steps": {
+    "welcome": {
+      "id": "welcome",
+      "message": "Привет! 👋\n\nВот обещанный материал по автоматизации для психологов:\n{MATERIAL_LINK}\n\nПодскажи, ты частный психолог или работаешь в психологическом центре?",
+      "setStatus": "MATERIAL_SENT",
+      "waitForReply": true,
+      "next": {
+        "type": "classify",
+        "classifier": "practice_type",
+        "branches": {
+          "PRIVATE_PRACTICE": "pitch_private",
+          "PSYCHOLOGY_CENTER": "pitch_center",
+          "BEGINNER": "pitch_beginner",
+          "UNKNOWN": "clarify_practice"
+        }
+      }
+    },
+    "clarify_practice": {
+      "id": "clarify_practice",
+      "message": "Уточни, пожалуйста 🙏\n\nВыбери вариант:\n1️⃣ Частный психолог — работаю самостоятельно\n2️⃣ Работаю в психологическом центре\n3️⃣ Только начинаю путь в психологии",
+      "waitForReply": true,
+      "next": {
+        "type": "classify",
+        "classifier": "practice_type",
+        "branches": {
+          "PRIVATE_PRACTICE": "pitch_private",
+          "PSYCHOLOGY_CENTER": "pitch_center",
+          "BEGINNER": "pitch_beginner",
+          "UNKNOWN": "pitch_private"
+        }
+      }
+    },
+    "pitch_private": {
+      "id": "pitch_private",
+      "message": "Отлично! Частная практика — это свобода 🎯\n\nНаш CRM для психологов поможет тебе:\n✅ Вести базу клиентов\n✅ Автоматически напоминать о сессиях\n✅ Принимать оплаты онлайн\n✅ Хранить заметки и историю клиента\n\nСколько клиентов у тебя сейчас в работе?",
+      "setCategory": "PRIVATE_PRACTICE",
+      "setStatus": "QUALIFIED",
+      "waitForReply": true,
+      "next": {
+        "type": "step",
+        "stepId": "offer_demo"
+      }
+    },
+    "pitch_center": {
+      "id": "pitch_center",
+      "message": "Здорово! Центр — это масштаб 💪\n\nДля психологических центров у нас командный модуль:\n✅ Управление несколькими специалистами\n✅ Единое расписание для всей команды\n✅ Аналитика по каждому терапевту\n✅ Корпоративный CRM\n\nСколько специалистов работает в вашем центре?",
+      "setCategory": "PSYCHOLOGY_CENTER",
+      "setStatus": "QUALIFIED",
+      "waitForReply": true,
+      "next": {
+        "type": "step",
+        "stepId": "offer_demo"
+      }
+    },
+    "pitch_beginner": {
+      "id": "pitch_beginner",
+      "message": "Круто, что выбираешь этот путь! 🌱\n\nДля начинающих психологов у нас специальный стартовый тариф:\n✅ До 20 клиентов — бесплатно\n✅ Базовый CRM\n✅ Готовые шаблоны для сессий\n\nУже есть первые клиенты или пока ищешь?",
+      "setCategory": "BEGINNER",
+      "setStatus": "QUALIFIED",
+      "waitForReply": true,
+      "next": {
+        "type": "step",
+        "stepId": "offer_demo"
+      }
+    },
+    "offer_demo": {
+      "id": "offer_demo",
+      "message": "Спасибо за ответ! 😊\n\nПредлагаю созвониться на 15 минут — покажу как это работает именно для твоей ситуации.\n\nКакой день тебе удобен? 📅",
+      "setStatus": "DEMO_OFFERED",
+      "waitForReply": false
+    }
+  }
+}
