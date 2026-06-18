@@ -68,14 +68,25 @@ export class Poller {
         ...(requestsResult.status === 'fulfilled' ? requestsResult.value : []),
       ];
       for (const { username, messages } of threads) {
+        const lastMsg = messages.at(-1);
+
+        // During seed scan: if the bot already sent the last message in this thread,
+        // the conversation is answered — mark all hashes and skip.
+        if (seedOnly && (lastMsg?.isOutgoing ?? false)) {
+          for (const msg of messages) this.seenDmHashes.add(msg.hash);
+          continue;
+        }
+
         for (const msg of messages) {
-          if (msg.isOutgoing) continue;
+          if (msg.isOutgoing) { this.seenDmHashes.add(msg.hash); continue; }
           if (this.seenDmHashes.has(msg.hash)) continue;
           this.seenDmHashes.add(msg.hash);
 
-          logger.info('New DM received', { username, seedOnly, preview: msg.text.substring(0, 60) });
+          logger.info('New DM received', { username, preview: msg.text.substring(0, 60) });
 
-          if (seedOnly) continue;
+          // During seed scan for unanswered threads: only reply to the LAST incoming
+          // message — avoids re-processing old messages from long conversations.
+          if (seedOnly && msg !== lastMsg) continue;
 
           // Check post keywords first — reply instantly via DM
           const { keyword, reply } = this.postKeywords.getMatch(msg.text);

@@ -262,7 +262,9 @@ export class InstagramClient {
         // NOT inside a [dir="auto"] element (which would make them @mentions inside text).
         // This is order-independent: works whether the link appears before or after the text.
         const tsPattern = /^\\d+\\s*[smhd]$|^\\d+\\s*(min|hour|day|week|month|sec|хв|год|дн|тиж|міс|сек)/i;
-        const reserved = new Set(['reels','explore','direct','p','tv','stories','accounts','reel','highlights']);
+        const reserved = new Set(['reels','explore','direct','p','tv','stories','accounts','reel','highlights','popular']);
+        // Instagram UI strings that are not comment text
+        const uiTexts = new Set(['reply','see translation','see more','view replies','load more comments','english','less','translate','follow','following']);
 
         function isAuthorLink(a) {
           if (a.closest('[dir="auto"]')) return false; // @mention inside comment text
@@ -274,6 +276,9 @@ export class InstagramClient {
           if (textEl.closest('a')) continue; // username display text — skip
           const text = (textEl.innerText || textEl.textContent || '').trim();
           if (!text || text.length < 2 || tsPattern.test(text)) continue;
+          if (uiTexts.has(text.toLowerCase())) continue; // skip UI buttons
+          if (/^©/.test(text)) continue; // skip footer copyright text
+          if (/^@?[\\w.]{1,30}$/.test(text)) continue; // skip bare username display texts
 
           let container = textEl.parentElement;
           for (let d = 0; d < 12 && container && container.tagName !== 'BODY'; d++) {
