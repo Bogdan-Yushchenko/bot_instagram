@@ -8,6 +8,7 @@
     "build": "tsc --build",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit",
+    "test": "tsx --test test/**/*.test.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
